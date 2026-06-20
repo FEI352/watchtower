@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"math"
 	"os"
 	"os/signal"
@@ -156,8 +157,15 @@ func Run(c *cobra.Command, names []string) {
 
 	if runOnce {
 		writeStartupMessage(c, time.Time{}, filterDesc)
-		runUpdatesWithNotifications(filter)
+		failedCount, updateCount := runUpdatesWithNotifications(filter)
 		notifier.Close()
+		if failedCount > 0 {
+			fmt.Fprintf(os.Stderr, "WATCHTOWER_FAILED=%d UPDATED=%d\n", failedCount, updateCount)
+			os.Exit(1)
+		}
+		if updateCount > 0 {
+			fmt.Fprintf(os.Stdout, "WATCHTOWER_UPDATED=%d\n", updateCount)
+		}
 		os.Exit(0)
 		return
 	}
@@ -316,7 +324,7 @@ func runUpgradesOnSchedule(c *cobra.Command, filter t.Filter, filtering string, 
 	return nil
 }
 
-func runUpdatesWithNotifications(filter t.Filter) {
+func runUpdatesWithNotifications(filter t.Filter) (int, int) {
 	notifier.StartNotification()
 	updateParams := t.UpdateParams{
 		Filter:          filter,
@@ -340,10 +348,15 @@ func runUpdatesWithNotifications(filter t.Filter) {
 		scanned = len(result.Scanned())
 		updated = len(result.Updated()) + len(result.Stale())
 		failed = len(result.Failed())
+		// Log failed container names for cron alerting
+		for _, f := range result.Failed() {
+			log.Errorf("Container %q failed to update: %v", f.Name(), f.Error())
+		}
 	}
 	notifications.LocalLog.WithFields(log.Fields{
 		"Scanned": scanned,
 		"Updated": updated,
 		"Failed":  failed,
 	}).Info("Session done")
+	return failed, updated
 }
